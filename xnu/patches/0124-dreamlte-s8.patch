@@ -92,7 +92,7 @@ index 7ba309b..ba647a8 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  extern void thread_terminate_self(void);
-@@ -615,10 +616,317 @@ a5touch_start_early(vm_offset_t nfc, vm_offset_t alive)
+@@ -615,10 +616,468 @@ a5touch_start_early(vm_offset_t nfc, vm_offset_t alive)
  	}
  }
  
@@ -114,7 +114,7 @@ index 7ba309b..ba647a8 100644
 +#define S8BAT_HSI2C_PA          0x10970000u
 +#define S8TS_ALIVE_PA           0x164b0000u
 +#define S8TS_GPA1_DAT           0x44u
-+#define S8TS_ADDR               0x48u
++#define S8TS_ADDR               0x48u  /* dreamlte S6SY761 */
 +#define S8BAT_FG                0x36u
 +#define S8BAT_CHG               0x69u
 +#define S8TS_FINGERS            10
@@ -307,6 +307,148 @@ index 7ba309b..ba647a8 100644
 +	}
 +}
 +
++/*
++ * Galaxy S8+ (dream2lte): STMicroelectronics FTS 36 70 (I2C 0x49).
++ * Separate from the S8 S6SY761 path. Enable with s8touch=2.
++ * This is an experimental polling driver (no XNU IRQ registration yet).
++ * Linux: stmfts.c + Samsung fts8cd56_dream2. No firmware/NVM writes.
++ */
++#define S8FTS_ADDR                 0x49u
++#define S8FTS_CMD_READ_EVENT       0x85u
++#define S8FTS_CMD_SLEEP_OUT        0x91u
++#define S8FTS_CMD_SENSE_ON         0x93u
++#define S8FTS_CMD_CLEAR_EVENTS     0xa1u
++#define S8FTS_CMD_FACTORY_INT     0x9cu
++
++static bool
++s8fts_command(uint8_t cmd)
++{
++	return s8i2c_xfer(s8ts_i2c, S8FTS_ADDR, &cmd, 1, NULL, 0);
++}
++
++static bool
++s8fts_read_event(uint8_t ev[8])
++{
++	uint8_t cmd = S8FTS_CMD_READ_EVENT;
++	return s8i2c_xfer(s8ts_i2c, S8FTS_ADDR, &cmd, 1, ev, 8);
++}
++
++static void
++s8fts_report(const uint8_t ev[8])
++{
++	unsigned kind = ev[0] & 0x0fu;    /* enter=3, leave=4, move=5 */
++	unsigned tid = ev[0] >> 4;
++	if (tid >= S8TS_FINGERS || (kind != 3 && kind != 4 && kind != 5)) {
++		return;
++	}
++	if (kind == 4) {  /* use last known coordinates on finger release */
++		if (s8ts_down[tid]) {
++			s8ts_down[tid] = false;
++			if (tid < 5) {
++				sweet_hid_touch((int)tid, 0, s8ts_x[tid], s8ts_y[tid]);
++			}
++			printf("FTS TOUCH: up id=%u\n", tid);
++		}
++		return;
++	}
++
++	/* ST FTS event: slot[0] high nibble, X in 1 + low(2), Y in high(2) + 3. */
++	unsigned rawx = (unsigned)ev[1] | (((unsigned)ev[2] & 0x0fu) << 8);
++	unsigned rawy = ((unsigned)ev[2] >> 4) | ((unsigned)ev[3] << 4);
++	if (rawx > 1439) rawx = 1439;
++	if (rawy > 2959) rawy = 2959;
++	unsigned x, y;
++	if (s8ts_native) {
++		/* SweetHIDTouch uses 1080 x 1920 even with native framebuffer. */
++		x = rawx * 1080u / 1440u;
++		y = rawy * 1920u / 2960u;
++	} else {
++		int px = (int)rawx - (1440 - 1125) / 2;
++		int py = (int)rawy - (2960 - 2436) / 2;
++		px = px < 0 ? 0 : (px > 1124 ? 1124 : px);
++		py = py < 0 ? 0 : (py > 2435 ? 2435 : py);
++		x = (unsigned)px * 1080u / 1125u;
++		y = (unsigned)py * 1920u / 2436u;
++	}
++	if (!s8ts_down[tid]) {
++		printf("FTS TOUCH: down id=%u x=%u y=%u\n", tid, x, y);
++	}
++	s8ts_down[tid] = true;
++	s8ts_x[tid] = (uint16_t)x;
++	s8ts_y[tid] = (uint16_t)y;
++	if (tid < 5) {
++		sweet_hid_touch((int)tid, 1, (int)x, (int)y);
++	}
++}
++
++static void
++s8fts_thread(void *arg, wait_result_t result)
++{
++	uint8_t ev[8];
++	unsigned errors = 0;
++	(void)arg;
++	(void)result;
++	printf("FTS TOUCH: polling worker started\n");
++	for (;;) {
++		/* Polling is intentional: the S8+ interrupt GPIO is not yet routed
++		 * through XNU. Read at most 16 events per iteration to avoid hogging CPU. */
++		for (unsigned i = 0; i < 16; i++) {
++			if (!s8fts_read_event(ev)) {
++				if (++errors <= 6 || !(errors & 127u)) {
++					printf("FTS TOUCH: I2C event read failed (%u)\n", errors);
++				}
++				break;
++			}
++			errors = 0;
++			if (ev[0] == 0) break; /* no queued events */
++			s8fts_report(ev);
++		}
++		s8ts_wait(errors ? 40 : 8);
++	}
++}
++
++static void
++s8fts_start(void)
++{
++	thread_t thread;
++	uint8_t b[6] = {0};
++	uint8_t id_cmd[3] = {0xb6, 0x00, 0x04};
++	bool found = false;
++	/* Exynos S2MPS17 LDO34/LDO35 were enabled by the dream2lte loader.
++	 * Probe the IC without writing firmware, calibration data or NVM. */
++	for (unsigned attempt = 0; attempt < 5; attempt++) {
++		if (s8i2c_xfer(s8ts_i2c, S8FTS_ADDR, id_cmd, 3, b, 6) &&
++		    b[0] == 0x36 && b[1] == 0x70) {
++			found = true;
++			break;
++		}
++		delay(20000);
++	}
++	if (!found) {
++		printf("FTS TOUCH: chip ID probe failed (got %02x %02x)\n", b[0], b[1]);
++		return;
++	}
++	printf("FTS TOUCH: detected 36 70, fw=%02x%02x\n", b[5], b[4]);
++	/* Wake, clear queued start-up events, enable sensing (no calibration).
++	 * The original Samsung kernel also issues 0x9C during initialization. */
++	if (!s8fts_command(S8FTS_CMD_SLEEP_OUT)) {
++		printf("FTS TOUCH: sleep-out command failed\n");
++		return;
++	}
++	delay(50000);
++	if (!s8fts_command(S8FTS_CMD_CLEAR_EVENTS) ||
++	    !s8fts_command(S8FTS_CMD_SENSE_ON) ||
++	    !s8fts_command(S8FTS_CMD_FACTORY_INT)) {
++		printf("FTS TOUCH: enable sequence failed\n");
++		return;
++	}
++	if (kernel_thread_start(s8fts_thread, NULL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	} else {
++		printf("FTS TOUCH: worker thread failed\n");
++	}
++}
++
 +static bool
 +s8bat_read16(unsigned addr, uint8_t reg, uint16_t *value)
 +{
@@ -378,6 +520,15 @@ index 7ba309b..ba647a8 100644
 +		return;
 +	}
 +	s8i2c_reset(s8ts_i2c);
++	if (enabled == 2) {
++		printf("FTS TOUCH: selecting dream2lte FTS driver\n");
++		s8fts_start();
++		return;
++	}
++	if (enabled != 1) {
++		printf("S8 TOUCH: invalid s8touch mode %d\n", enabled);
++		return;
++	}
 +	if (!s8ts_cmd_read(0x55, b, 1) || b[0] != 0x20) {     /* BOOT_STATUS */
 +		printf("S8 TOUCH: no S6SY761 in application mode (status %#x)\n", b[0]);
 +		return;

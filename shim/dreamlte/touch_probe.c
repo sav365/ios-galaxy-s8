@@ -191,6 +191,29 @@ static void dump(const char *what, const uint8_t *b, unsigned n, uint32_t st)
 	out("\n");
 }
 
+/*
+ * Dream2: enable the existing USI09 bus clocks, I2C mux and GPE3 pins.
+ * This routine does not speak S6SY761, perform calibration or probe touch.
+ * Call only after S2MPS17 LDO34/35 have been powered by pmic_init().
+ */
+void touch_bus_prepare(void (*kv_fn)(const char *, uint64_t), void (*out_fn)(const char *))
+{
+	kv = kv_fn;
+	out = out_fn;
+	delay_ms(200);  /* sensor AVDD/DVDD stabilization */
+	wr(P1_USI09_PCLK, rd(P1_USI09_PCLK) | GATE_ON);
+	wr(P1_USI09_SCLK, rd(P1_USI09_SCLK) | GATE_ON);
+	wr(P1_USI09_USER_MUX, rd(P1_USI09_USER_MUX) & ~(1u << 4));
+	wr(SYSREG_USI09, (rd(SYSREG_USI09) & ~0xfu) | USI_V1_I2C0_1);
+	wr(GPE3, (rd(GPE3) & ~0xffu) | 0x22u);
+	wr(GPE3 + 8, rd(GPE3 + 8) & ~0xffu);
+	hsi2c_reset();
+	out("DREAM2 FTS: USI09 clocks/pins prepared; no IC probe in loader\n");
+	show("gpe3 con", GPE3);
+	show("usi conf", HSI2C + CONF);
+	out("\n");
+}
+
 void touch_probe(void (*kv_fn)(const char *, uint64_t), void (*out_fn)(const char *))
 {
 	uint8_t c, b[11];

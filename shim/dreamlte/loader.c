@@ -414,10 +414,13 @@ uint64_t dl_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	out("\n");
 	ufs_probe(kv, out, UFS_PROBE_DMA);
 #if defined(S8_DREAM2LTE)
-	/* S8+ first-stage bring-up: unverified panel/touch/PMIC probes
-	 * must not change hardware state until validated on G955F. */
-	(void)rtc_bootarg; /* retain helper with -Werror */
-	out("S8+ bring-up: skipping touch, PMIC, battery, DPU and Mongoose probes\n");
+	/* G955F Device Tree: FTS uses S2MPS17 LDO34 (tsp_io 1.85V) and
+	 * LDO35 (tsp_avdd 3.0V), same controller bus 0x108e0000 as S8.
+	 * Prepare only these resources; don't run the S6SY761-specific probe. */
+	rtc_bootarg(ba, pmic_init(kv, out));
+	clean(ba_pa, ba_pa + PAGE_SIZE);
+	touch_bus_prepare(kv, out);
+	out("S8+ FTS: PMIC + touch I2C prepared; battery/DPU/Mongoose probes skipped\n");
 #else
 	rtc_bootarg(ba, pmic_init(kv, out));
 	clean(ba_pa, ba_pa + PAGE_SIZE);
