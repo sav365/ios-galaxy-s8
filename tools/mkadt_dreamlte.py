@@ -69,19 +69,21 @@ def cpu_node(logical):
     ]
 
 
-def build(canvas=(FB_W, FB_H)):
+def build(canvas=(FB_W, FB_H), device='dreamlte'):
+    if device not in ('dreamlte', 'dream2lte'):
+        raise ValueError('unsupported device: ' + device)
     root = mkadt.build(seed=os.urandom(64), qemu=True)
     # The kernel's SweetPlatformExpert personality matches 'samsung,a5xelte'
     # (KernelConfigTables.cpp); without it IOKit panics "Unable to find driver
     # for this platform" (S8 boot 3). IONameMatch accepts any listed name.
-    set_prop(root, 'compatible', mkadt.cstr('samsung,dreamlte') +
+    set_prop(root, 'compatible', mkadt.cstr('samsung,' + device) +
              mkadt.cstr('samsung,a5xelte') + mkadt.cstr('samsung,exynos8895') +
              mkadt.cstr('AppleARM'))
     chosen = child(root, 'chosen')
     set_prop(chosen, 'dram-base', mkadt.u64(DRAM_BASE))
     set_prop(chosen, 'dram-size', mkadt.u64(DRAM_SIZE))
-    set_prop(chosen, 'firmware-version', mkadt.cstr('dreamlte-entry'))
-    set_prop(chosen, 'system-firmware-version', mkadt.cstr('dreamlte-entry'))
+    set_prop(chosen, 'firmware-version', mkadt.cstr(device + '-entry'))
+    set_prop(chosen, 'system-firmware-version', mkadt.cstr(device + '-entry'))
     cpus = child(root, 'cpus')
     cpu0 = child(cpus, 'cpu0')
     for key, value in cpu_node(0):
@@ -90,7 +92,7 @@ def build(canvas=(FB_W, FB_H)):
     for logical in range(1, 8):
         cpus.children.append(mkadt.node(f'cpu{logical}', cpu_node(logical)))
     arm_io = child(root, 'arm-io')
-    set_prop(arm_io, 'device_type', mkadt.cstr('dreamlte-io'))
+    set_prop(arm_io, 'device_type', mkadt.cstr(device + '-io'))
     set_prop(arm_io, 'compatible', mkadt.cstr('samsung,exynos8895-io') + mkadt.cstr('arm-io'))
     set_prop(arm_io, 'ranges', mkadt.u64(0, 0x10000000, 0xf0000000))
     arm_io.children = [n for n in arm_io.children if n.prop('name') == mkadt.cstr('wdt')]
@@ -106,7 +108,7 @@ def build(canvas=(FB_W, FB_H)):
         ('device_type', mkadt.cstr('display-subsystem')),
         # AppleCLCD (SweetFramebuffer.cpp) matches 'samsung,a5xelte-display';
         # without it no main display exists and SpringBoard aborts (boot 16).
-        ('compatible', mkadt.cstr('samsung,dreamlte-display') +
+        ('compatible', mkadt.cstr('samsung,' + device + '-display') +
          mkadt.cstr('samsung,a5xelte-display')),
         # Must equal the size AppleCLCD reports (GetDisplaySize): 1125x2436
         # unless sweetfb_native=1. Boot 18 presented 1125x2436 with a
@@ -136,7 +138,9 @@ if __name__ == '__main__':
     parser.add_argument('output', type=Path)
     parser.add_argument('--canvas', default=f'{FB_W}x{FB_H}',
                         help='display size presented to iOS, WxH')
+    parser.add_argument('--device', choices=['dreamlte', 'dream2lte'],
+                        default='dreamlte', help='Samsung device profile')
     args = parser.parse_args()
-    blob = adt.serialize(build(tuple(int(v) for v in args.canvas.split('x'))))
+    blob = adt.serialize(build(tuple(int(v) for v in args.canvas.split('x')), device=args.device))
     args.output.write_bytes(blob)
     print(f'{args.output}: {len(blob)} bytes')

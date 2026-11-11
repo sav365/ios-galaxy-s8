@@ -302,7 +302,11 @@ uint64_t dl_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	prz2->start = prz2->size = 0;
 	fill(0, 0, FB_W, FB_H, 0xff000000U);
 	fg = 0xffffff00U;
+	#if defined(S8_DREAM2LTE)
+	out("S8LOADER BEGIN  (ios-s8 dream2lte XNU loader)\n");
+#else
 	out("S8LOADER BEGIN  (ios-s8 dreamlte XNU loader)\n");
+#endif
 	fg = 0xffffffffU;
 	kv("EL", el);
 	kv("SCTLR", sctlr);
@@ -409,12 +413,19 @@ uint64_t dl_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	}
 	out("\n");
 	ufs_probe(kv, out, UFS_PROBE_DMA);
+#if defined(S8_DREAM2LTE)
+	/* S8+ first-stage bring-up: unverified panel/touch/PMIC probes
+	 * must not change hardware state until validated on G955F. */
+	(void)rtc_bootarg; /* retain helper with -Werror */
+	out("S8+ bring-up: skipping touch, PMIC, battery, DPU and Mongoose probes\n");
+#else
 	rtc_bootarg(ba, pmic_init(kv, out));
 	clean(ba_pa, ba_pa + PAGE_SIZE);
 	touch_probe(kv, out);
 	battery_probe(kv, out);
 	display_probe(kv, out);
 	mngs_probe(kv, out);
+#endif
 	/* smp_probe(kv, out) proved the PMU power-up (boot 19); it leaves the
 	 * probed cores' PMU power on, which hid the 0 -> 0xF edge XNU needs. */
 	(void)smp_probe;

@@ -10,12 +10,14 @@ shift 3
 # a5touchprobe=0: the A5 touch probe maps Exynos7580 I2C/GPIO; on the S8 its
 # first read is a synchronous external abort (boot 8, a5xelte_touch_probe).
 args=${*:-debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress wdt=-1 wdt_test=no_user_checkin a5touchprobe=0}
-work=$repo/shim/dreamlte/out
+device=${S8_DEVICE:-dreamlte}
+case "$device" in dreamlte|dream2lte) ;; *) echo "unsupported device: $device" >&2; exit 1 ;; esac
+work=$repo/shim/dreamlte/out/$device
 mkdir -p "$work"
 # The ADT canvas must match the size the kernel presents (SweetFramebuffer).
 canvas=1125x2436
 [[ " $args " == *" sweetfb_native=1 "* ]] && canvas=1440x2960
-python3 "$repo/tools/mkadt_dreamlte.py" "$work/dreamlte.adt" --canvas "$canvas"
-python3 "$repo/tools/mkpayload.py" "$kernel" "$work/dreamlte.adt" "$work/payload.bin" --cmdline "$args"
-bash "$repo/shim/dreamlte/build.sh" "$stock" "$work/payload.bin" "$out"
+python3 "$repo/tools/mkadt_dreamlte.py" "$work/$device.adt" --canvas "$canvas" --device "$device"
+python3 "$repo/tools/mkpayload.py" "$kernel" "$work/$device.adt" "$work/payload.bin" --cmdline "$args"
+S8_DEVICE="$device" bash "$repo/shim/dreamlte/build.sh" "$stock" "$work/payload.bin" "$out"
 python3 "$repo/tools/dreamlte_bootimg_info.py" "$out" | head -4

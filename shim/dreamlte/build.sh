@@ -7,6 +7,11 @@ cd "$(dirname "$0")"
 CC=aarch64-linux-gnu-gcc
 OBJCOPY=aarch64-linux-gnu-objcopy
 CFLAGS="-O2 -ffreestanding -nostdlib -fno-pic -mgeneral-regs-only -mstrict-align -fno-stack-protector -fno-tree-loop-distribute-patterns -march=armv8-a -Wall -Wextra -Werror"
+case "${S8_DEVICE:-dreamlte}" in
+  dreamlte) ;;
+  dream2lte) CFLAGS="$CFLAGS -DS8_DREAM2LTE=1" ;;
+  *) echo "unsupported device: ${S8_DEVICE}" >&2; exit 1 ;;
+esac
 mkdir -p out
 $CC $CFLAGS -c start.S -o out/start.o
 $CC $CFLAGS -c loader.c -o out/loader.o
