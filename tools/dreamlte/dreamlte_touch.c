@@ -313,24 +313,24 @@ static void
 s8fts_start(void)
 {
 	thread_t thread;
-	uint8_t b[6] = {0};
+	uint8_t b[7] = {0};
 	uint8_t id_cmd[3] = {0xb6, 0x00, 0x04};
 	bool found = false;
 	/* Exynos S2MPS17 LDO34/LDO35 were enabled by the dream2lte loader.
 	 * Probe the IC without writing firmware, calibration data or NVM. */
 	for (unsigned attempt = 0; attempt < 5; attempt++) {
-		if (s8i2c_xfer(s8ts_i2c, S8FTS_ADDR, id_cmd, 3, b, 6) &&
-		    b[0] == 0x36 && b[1] == 0x70) {
+		if (s8i2c_xfer(s8ts_i2c, S8FTS_ADDR, id_cmd, 3, b, 7) &&
+		    b[1] == 0x36 && b[2] == 0x70) {
 			found = true;
 			break;
 		}
 		delay(20000);
 	}
 	if (!found) {
-		printf("FTS TOUCH: chip ID probe failed (raw %02x %02x %02x %02x %02x %02x)\n", b[0], b[1], b[2], b[3], b[4], b[5]);
+		printf("FTS TOUCH: chip ID probe failed (raw %02x %02x %02x %02x %02x %02x %02x)\n", b[0], b[1], b[2], b[3], b[4], b[5], b[6]);
 		return;
 	}
-	printf("FTS TOUCH: detected 36 70, fw=%02x%02x\n", b[5], b[4]);
+	printf("FTS TOUCH: detected 36 70, fw=%02x%02x\n", b[6], b[5]);
 	/* Wake, clear queued start-up events, enable sensing (no calibration).
 	 * The original Samsung kernel also issues 0x9C during initialization. */
 	if (!s8fts_command(S8FTS_CMD_SLEEP_OUT)) {
