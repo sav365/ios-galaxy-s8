@@ -327,7 +327,7 @@ s8fts_start(void)
 		delay(20000);
 	}
 	if (!found) {
-		printf("FTS TOUCH: chip ID probe failed (got %02x %02x)\n", b[0], b[1]);
+		printf("FTS TOUCH: chip ID probe failed (raw %02x %02x %02x %02x %02x %02x)\n", b[0], b[1], b[2], b[3], b[4], b[5]);
 		return;
 	}
 	printf("FTS TOUCH: detected 36 70, fw=%02x%02x\n", b[5], b[4]);
