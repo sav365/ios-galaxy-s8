@@ -1,0 +1,53 @@
+--- a/bsd/dev/a5xelte_touch.c
++++ b/bsd/dev/a5xelte_touch.c
+@@ -222,17 +222,39 @@
+ #define S8FTS_CMD_CLEAR_EVENTS     0xa1u
+ #define S8FTS_CMD_FACTORY_INT     0x9cu
+ 
++/* Diagnostic transport isolation: the event reader previously returned the
++ * chip-ID response on every poll. Reset only the touch HSI2C controller
++ * before each complete FTS transaction, retaining the repeated START.
++ * This does not reset the FTS chip or write firmware/calibration/NVM.
++ */
++static bool
++s8fts_xfer(const uint8_t *w, unsigned wlen, uint8_t *r, unsigned rlen)
++{
++    static unsigned traces;
++    bool trace = traces++ < 16;
++    uint32_t before = a5touch_read(s8ts_i2c, 0x30);
++    s8i2c_reset(s8ts_i2c);
++    uint32_t cleared = a5touch_read(s8ts_i2c, 0x30);
++    bool ok = s8i2c_xfer(s8ts_i2c, S8FTS_ADDR, w, wlen, r, rlen);
++    if (trace) {
++        printf("FTS TOUCH: xfer reset cmd=%02x w=%u r=%u ok=%u fifo=%08x/%08x/%08x state=%08x\n",
++            wlen ? w[0] : 0, wlen, rlen, (unsigned)ok, before, cleared,
++            a5touch_read(s8ts_i2c, 0x30), a5touch_read(s8ts_i2c, 0x50));
++    }
++    return ok;
++}
++
+ static bool
+ s8fts_command(uint8_t cmd)
+ {
+-	return s8i2c_xfer(s8ts_i2c, S8FTS_ADDR, &cmd, 1, NULL, 0);
++	return s8fts_xfer(&cmd, 1, NULL, 0);
+ }
+ 
+ static bool
+ s8fts_read_event(uint8_t ev[8])
+ {
+ 	uint8_t cmd = S8FTS_CMD_READ_EVENT;
+-	return s8i2c_xfer(s8ts_i2c, S8FTS_ADDR, &cmd, 1, ev, 8);
++	return s8fts_xfer(&cmd, 1, ev, 8);
+ }
+ 
+ static void
+@@ -328,7 +350,7 @@
+ 	/* Exynos S2MPS17 LDO34/LDO35 were enabled by the dream2lte loader.
+ 	 * Probe the IC without writing firmware, calibration data or NVM. */
+ 	for (unsigned attempt = 0; attempt < 5; attempt++) {
+-		if (s8i2c_xfer(s8ts_i2c, S8FTS_ADDR, id_cmd, 3, b, 7) &&
++		if (s8fts_xfer(id_cmd, 3, b, 7) &&
+ 		    b[1] == 0x36 && b[2] == 0x70) {
+ 			found = true;
+ 			break;
