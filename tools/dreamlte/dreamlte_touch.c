@@ -302,6 +302,15 @@ s8fts_thread(void *arg, wait_result_t result)
 				break;
 			}
 			errors = 0;
+			static unsigned idle_polls, data_logs;
+			unsigned any = 0;
+			for (unsigned j = 0; j < 8; j++) any |= ev[j];
+			bool log_event = any ? (data_logs++ < 80) :
+			    (idle_polls++ < 3 || (idle_polls & 2047u) == 0);
+			if (log_event) {
+			    printf("FTS TOUCH: event raw %02x %02x %02x %02x %02x %02x %02x %02x\n",
+			        ev[0], ev[1], ev[2], ev[3], ev[4], ev[5], ev[6], ev[7]);
+			}
 			if (ev[0] == 0) break; /* no queued events */
 			s8fts_report(ev);
 		}
